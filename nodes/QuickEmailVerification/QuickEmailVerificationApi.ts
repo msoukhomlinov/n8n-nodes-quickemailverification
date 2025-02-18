@@ -16,6 +16,7 @@ export interface IEmailVerificationResponse {
 	did_you_mean: string;
 	success: boolean;
 	message: string | null;
+	verifiedAt?: string;
 }
 
 export class QuickEmailVerificationApi {
@@ -27,13 +28,13 @@ export class QuickEmailVerificationApi {
 	}
 
 	async verifyEmail(email: string): Promise<IEmailVerificationResponse> {
+		if (!email || !this.apiKey) {
+			throw new Error('Email and API key are required');
+		}
+
 		const options: OptionsWithUri = {
 			method: 'GET',
-			uri: this.baseUrl,
-			qs: {
-				email,
-				key: this.apiKey,
-			},
+			uri: `${this.baseUrl}?email=${encodeURIComponent(email)}&apikey=${encodeURIComponent(this.apiKey)}`,
 			json: true,
 		};
 

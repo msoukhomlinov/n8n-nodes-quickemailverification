@@ -1,7 +1,7 @@
-import { Autotask } from './nodes/Autotask/Autotask.node';
-import { AutotaskApi } from './credentials/AutotaskApi.credentials';
+import { QuickEmailVerification } from './nodes/QuickEmailVerification/QuickEmailVerification.node';
+import { QuickEmailVerificationApi } from './credentials/QuickEmailVerificationApi.credentials';
 
 export {
-	Autotask,
-	AutotaskApi,
+	QuickEmailVerification,
+	QuickEmailVerificationApi,
 };

@@ -20,14 +20,16 @@ npm install
 - Response caching with configurable TTL
 - Rate limiting and retry handling
 - Secure credential storage
+- Remaining credits tracking
+- Timestamp tracking for verifications
 
 ## Configuration
 
 1. Get your API key from [QuickEmailVerification](https://quickemailverification.com)
 2. Add your API credentials in n8n credentials manager
 3. Configure optional caching settings:
-   - Enable/disable caching
-   - Set cache TTL (default: 30 days)
+   - Enable/disable caching (default: enabled)
+   - Set cache TTL in days (default: 30 days)
 
 ## Usage
 
@@ -43,6 +45,54 @@ The node returns verification results including:
 - Detailed reason
 - Additional email information (disposable, role-based, etc.)
 - MX record information
+- Caching status (`cached: true/false`)
+- Verification timestamp (`verifiedAt` in ISO 8601 format)
+- Remaining API credits (`remainingCredits`)
+
+Example response:
+```json
+{
+    "result": "valid",
+    "reason": "accepted_email",
+    "disposable": false,
+    "accept_all": false,
+    "role": false,
+    "free": false,
+    "email": "test@example.com",
+    "user": "test",
+    "domain": "example.com",
+    "mx_record": true,
+    "mx_domain": "example.com",
+    "safe_to_send": true,
+    "did_you_mean": "",
+    "success": true,
+    "message": null,
+    "cached": false,
+    "verifiedAt": "2024-03-14T12:34:56.789Z",
+    "remainingCredits": 950
+}
+```
+
+## Error Handling
+
+The node handles various API response codes:
+- 200: Success
+- 400: Bad Request
+- 401: Invalid API key
+- 402: Credit limit reached
+- 403: Account disabled
+- 404: Invalid endpoint
+- 429: Rate limit exceeded
+- 500: Server error
+
+## Best Practices
+
+1. Enable caching for frequently checked emails
+2. Use batch operations for multiple emails
+3. Monitor remaining credits
+4. Handle rate limits with appropriate delays
+5. Validate email format before verification
+6. Monitor cache usage for optimal performance
 
 ## License
 

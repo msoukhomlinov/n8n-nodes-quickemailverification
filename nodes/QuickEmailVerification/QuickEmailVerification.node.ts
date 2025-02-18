@@ -40,7 +40,17 @@ export class QuickEmailVerification implements INodeType {
 					{
 						name: 'Verify Email',
 						value: 'verifyEmail',
-						description: 'Verify an email address',
+						description: 'Returns:\n\n' +
+							'- result: valid/invalid/unknown\n' +
+							'- reason: accepted_email, invalid_email, invalid_domain, rejected_email, etc.\n' +
+							'- disposable: true if disposable email domain\n' +
+							'- accept_all: true if domain accepts all emails\n' +
+							'- role: true if role-based (admin@, info@)\n' +
+							'- safe_to_send: true if safe for deliverability\n' +
+							'- email: normalized address\n' +
+							'- cached: true if from cache\n' +
+							'- verifiedAt: verification timestamp\n' +
+							'- remainingCredits: available API credits',
 						action: 'Verify an email address',
 					},
 				],
@@ -96,23 +106,36 @@ export class QuickEmailVerification implements INodeType {
 				if (operation === 'verifyEmail') {
 					const email = this.getNodeParameter('email', i) as string;
 					let verificationResult: IEmailVerificationResponse | undefined;
+					let cachedResult: IEmailVerificationResponse | undefined;
 
 					if (enableCache) {
-						const cachedResult = await QuickEmailVerification.cache.get(email);
-						if (cachedResult) {
-							verificationResult = cachedResult as IEmailVerificationResponse;
+						const cached = await QuickEmailVerification.cache.get(email);
+						if (cached) {
+							verificationResult = cached as IEmailVerificationResponse;
+							cachedResult = verificationResult;
 						}
 					}
 
 					if (!verificationResult) {
 						verificationResult = await apiHandler.verifyEmail(email);
 						if (enableCache && verificationResult.success) {
-							await QuickEmailVerification.cache.set(email, verificationResult);
+							const resultWithTimestamp = {
+								...verificationResult,
+								verifiedAt: new Date().toISOString(),
+							};
+							await QuickEmailVerification.cache.set(email, resultWithTimestamp);
+							verificationResult = resultWithTimestamp;
 						}
 					}
 
+					const responseWithMetadata = {
+						...verificationResult,
+						cached: !!cachedResult,
+						verifiedAt: verificationResult.verifiedAt || new Date().toISOString(),
+					};
+
 					returnData.push({
-						json: verificationResult as unknown as IDataObject,
+						json: responseWithMetadata as unknown as IDataObject,
 					});
 				}
 			} catch (error) {
