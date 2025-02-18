@@ -1,4 +1,4 @@
-import { OptionsWithUri } from 'request-promise-native';
+import type { OptionsWithUri } from 'request-promise-native';
 
 export interface IEmailVerificationResponse {
 	result: 'valid' | 'invalid' | 'unknown';
@@ -46,9 +46,11 @@ export class QuickEmailVerificationApi {
 
 			return response;
 		} catch (error) {
-			if (error.statusCode === 401) {
+			const err = error as { statusCode?: number };
+			if (err.statusCode === 401) {
 				throw new Error('Invalid API key');
-			} else if (error.statusCode === 429) {
+			}
+			if (err.statusCode === 429) {
 				throw new Error('Rate limit exceeded');
 			}
 			throw error;
@@ -56,7 +58,7 @@ export class QuickEmailVerificationApi {
 	}
 
 	private async makeRequest(options: OptionsWithUri): Promise<IEmailVerificationResponse> {
-		const request = (await import('request-promise-native')).default;
+		const { default: request } = await import('request-promise-native');
 		return request(options);
 	}
 }

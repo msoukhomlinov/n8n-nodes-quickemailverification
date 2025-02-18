@@ -1,6 +1,8 @@
 # Dependencies
 node_modules/
 dist/
+docs/
+references/
 
 # Build files
 *.js.map

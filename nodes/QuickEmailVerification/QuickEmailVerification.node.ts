@@ -1,13 +1,14 @@
-import {
+import type {
 	IExecuteFunctions,
 	INodeExecutionData,
 	INodeType,
 	INodeTypeDescription,
-	NodeConnectionType,
 	IDataObject,
 } from 'n8n-workflow';
+import { NodeConnectionType } from 'n8n-workflow';
 import Keyv from 'keyv';
-import { QuickEmailVerificationApi, IEmailVerificationResponse } from './QuickEmailVerificationApi';
+import { QuickEmailVerificationApi } from './QuickEmailVerificationApi.js';
+import type { IEmailVerificationResponse } from './QuickEmailVerificationApi.js';
 
 export class QuickEmailVerification implements INodeType {
 	description: INodeTypeDescription = {
@@ -115,8 +116,9 @@ export class QuickEmailVerification implements INodeType {
 					});
 				}
 			} catch (error) {
+				const err = error as { message: string };
 				if (this.continueOnFail()) {
-					returnData.push({ json: { error: error.message } });
+					returnData.push({ json: { error: err.message } });
 					continue;
 				}
 				throw error;
