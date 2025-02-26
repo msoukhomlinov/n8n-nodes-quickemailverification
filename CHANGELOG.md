@@ -2,7 +2,7 @@
 
 All notable changes to the n8n-nodes-quickemailverification package will be documented in this file.
 
-## [1.1.0] - 26/02/2025
+## [1.1.0] - 26-02-2024
 
 ### Changed
 

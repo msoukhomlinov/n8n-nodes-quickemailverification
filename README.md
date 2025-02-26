@@ -2,6 +2,9 @@
 
 This is an n8n community node for QuickEmailVerification API. It provides email verification functionality with caching support.
 
+![QuickEmailVerification Node Overview](./overview.gif)
+*QuickEmailVerification node in action showing email verification with caching capabilities*
+
 ## Installation
 
 Follow these steps to install the node:
