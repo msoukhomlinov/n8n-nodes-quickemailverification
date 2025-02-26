@@ -17,6 +17,7 @@ export interface IEmailVerificationResponse {
 	success: boolean;
 	message: string | null;
 	verifiedAt?: string;
+	remainingCredits?: number;
 }
 
 export class QuickEmailVerificationApi {
@@ -36,16 +37,23 @@ export class QuickEmailVerificationApi {
 			method: 'GET',
 			uri: `${this.baseUrl}?email=${encodeURIComponent(email)}&apikey=${encodeURIComponent(this.apiKey)}`,
 			json: true,
+			resolveWithFullResponse: true,
 		};
 
 		try {
-			const response = await this.makeRequest(options);
+			const fullResponse = await this.makeRequest(options);
+			const response = fullResponse.body;
 
 			if (!response.success) {
 				throw new Error(response.message || 'Email verification failed');
 			}
 
-			return response;
+			const remainingCredits = fullResponse.headers['x-qev-remaining-credits'];
+
+			return {
+				...response,
+				remainingCredits: remainingCredits ? Number.parseInt(remainingCredits.toString(), 10) : undefined,
+			};
 		} catch (error) {
 			const err = error as { statusCode?: number };
 			if (err.statusCode === 401) {
@@ -58,7 +66,7 @@ export class QuickEmailVerificationApi {
 		}
 	}
 
-	private async makeRequest(options: OptionsWithUri): Promise<IEmailVerificationResponse> {
+	private async makeRequest(options: OptionsWithUri): Promise<{ body: IEmailVerificationResponse; headers: Record<string, unknown> }> {
 		const { default: request } = await import('request-promise-native');
 		return request(options);
 	}

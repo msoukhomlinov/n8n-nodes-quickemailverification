@@ -76,3 +76,6 @@ credentials.json
 # Misc
 Thumbs.db
 *.log
+
+.cursorrules
+.cursorignore
