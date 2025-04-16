@@ -2,6 +2,13 @@
 
 All notable changes to the n8n-nodes-quickemailverification package will be documented in this file.
 
+## [1.2.0] - 18-06-2024
+
+### Security
+
+- Replaced vulnerable `request` and `request-promise-native` packages with `axios`
+- Fixed SSRF vulnerability (CVE-2023-28155) by upgrading HTTP client
+
 ## [1.1.0] - 26-02-2024
 
 ### Changed

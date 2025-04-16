@@ -1,4 +1,4 @@
-import type { OptionsWithUri } from 'request-promise-native';
+import axios from 'axios';
 
 export interface IEmailVerificationResponse {
 	result: 'valid' | 'invalid' | 'unknown';
@@ -33,41 +33,46 @@ export class QuickEmailVerificationApi {
 			throw new Error('Email and API key are required');
 		}
 
-		const options: OptionsWithUri = {
-			method: 'GET',
-			uri: `${this.baseUrl}?email=${encodeURIComponent(email)}&apikey=${encodeURIComponent(this.apiKey)}`,
-			json: true,
-			resolveWithFullResponse: true,
-		};
+		const url = `${this.baseUrl}?email=${encodeURIComponent(email)}&apikey=${encodeURIComponent(this.apiKey)}`;
 
 		try {
-			const fullResponse = await this.makeRequest(options);
-			const response = fullResponse.body;
+			const response = await this.makeRequest(url);
+			const responseData = response.data;
 
-			if (!response.success) {
-				throw new Error(response.message || 'Email verification failed');
+			if (!responseData.success) {
+				throw new Error(responseData.message || 'Email verification failed');
 			}
 
-			const remainingCredits = fullResponse.headers['x-qev-remaining-credits'];
+			const remainingCredits = response.headers['x-qev-remaining-credits'];
 
 			return {
-				...response,
+				...responseData,
 				remainingCredits: remainingCredits ? Number.parseInt(remainingCredits.toString(), 10) : undefined,
 			};
-		} catch (error) {
-			const err = error as { statusCode?: number };
-			if (err.statusCode === 401) {
-				throw new Error('Invalid API key');
-			}
-			if (err.statusCode === 429) {
-				throw new Error('Rate limit exceeded');
+		} catch (error: any) {
+			if (axios.isAxiosError(error)) {
+				if (error.response?.status === 401) {
+					throw new Error('Invalid API key');
+				}
+				if (error.response?.status === 429) {
+					throw new Error('Rate limit exceeded');
+				}
 			}
 			throw error;
 		}
 	}
 
-	private async makeRequest(options: OptionsWithUri): Promise<{ body: IEmailVerificationResponse; headers: Record<string, unknown> }> {
-		const { default: request } = await import('request-promise-native');
-		return request(options);
+	private async makeRequest(url: string): Promise<{ data: IEmailVerificationResponse; headers: Record<string, unknown> }> {
+		const response = await axios.get(url, {
+			headers: {
+				'Accept': 'application/json',
+				'User-Agent': 'n8n-nodes-quickemailverification'
+			}
+		});
+
+		return {
+			data: response.data,
+			headers: response.headers
+		};
 	}
 }
