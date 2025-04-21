@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-quickemailverification",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "engines": {
     "node": ">=18.10",
     "pnpm": ">=9.1"

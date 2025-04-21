@@ -2,6 +2,8 @@
 
 This is an n8n community node for QuickEmailVerification API. It provides email verification functionality with caching support.
 
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Support-yellow.svg)](https://buymeacoffee.com/msoukhomlinov)
+
 ![QuickEmailVerification Node Overview](./overview.gif)
 *QuickEmailVerification node in action showing email verification with caching capabilities*
 
@@ -96,6 +98,12 @@ The node handles various API response codes:
 4. Handle rate limits with appropriate delays
 5. Validate email format before verification
 6. Monitor cache usage for optimal performance
+
+## Support
+
+If you find this node helpful and would like to support its development:
+
+[![Buy Me A Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://buymeacoffee.com/msoukhomlinov)
 
 ## License
 
