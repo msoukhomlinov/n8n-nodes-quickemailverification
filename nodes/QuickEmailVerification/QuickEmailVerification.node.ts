@@ -58,6 +58,7 @@ export class QuickEmailVerification implements INodeType {
 		name: 'quickEmailVerification',
 		icon: 'file:quickemailverification.svg',
 		group: ['transform'],
+		usableAsTool: true,
 		version: 1,
 		subtitle: '={{$parameter["operation"]}}',
 		description: 'Verify email addresses using QuickEmailVerification API',

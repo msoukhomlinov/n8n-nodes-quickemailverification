@@ -2,6 +2,11 @@
 
 All notable changes to the n8n-nodes-quickemailverification package will be documented in this file.
 
+## [1.2.2] - 2025-04-27
+
+### Changed
+- Added support for usableAsTool
+
 ## [1.2.1] - 2025-04-21
 
 ### Changed
