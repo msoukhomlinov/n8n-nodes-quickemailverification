@@ -198,6 +198,25 @@ export class QuickEmailVerification implements INodeType {
 		}
 	}
 
+	// Helper to get node version from package.json
+	static getNodeVersion(): string {
+		const pkgPath = path.join(__dirname, '../../package.json');
+		const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+		return pkg.version;
+	}
+
+	// Helper to initialise cache and check version
+	static async initialiseCacheWithVersion(cache: Keyv) {
+		const currentVersion = QuickEmailVerification.getNodeVersion();
+		const versionKey = '__cache_version__';
+		const cachedVersion = await cache.get(versionKey);
+		if (cachedVersion !== currentVersion) {
+			await cache.clear();
+			await cache.set(versionKey, currentVersion);
+			console.log(`[QuickEmailVerification] Cache cleared due to version change (${cachedVersion} -> ${currentVersion})`);
+		}
+	}
+
 	// Get or create the address cache instance
 	static getAddressCache(ttl: number): Keyv {
 		if (!QuickEmailVerification.addressCache) {
@@ -208,6 +227,8 @@ export class QuickEmailVerification implements INodeType {
 			};
 			QuickEmailVerification.addressCache = new Keyv(options as Record<string, unknown>);
 			QuickEmailVerification.addressCache.on('error', (err: Error) => console.error('Per-address cache error:', err));
+			// Initialise versioning
+			QuickEmailVerification.initialiseCacheWithVersion(QuickEmailVerification.addressCache).catch(console.error);
 		} else if (ttl !== QuickEmailVerification.addressCache.opts.ttl) {
 			// Update TTL if changed
 			const store = QuickEmailVerification.createAddressStore();
@@ -217,6 +238,8 @@ export class QuickEmailVerification implements INodeType {
 			};
 			QuickEmailVerification.addressCache = new Keyv(options as Record<string, unknown>);
 			QuickEmailVerification.addressCache.on('error', (err: Error) => console.error('Per-address cache error:', err));
+			// Initialise versioning
+			QuickEmailVerification.initialiseCacheWithVersion(QuickEmailVerification.addressCache).catch(console.error);
 		}
 		return QuickEmailVerification.addressCache;
 	}
@@ -282,6 +305,8 @@ export class QuickEmailVerification implements INodeType {
 			QuickEmailVerification.domainAcceptAllCache = new Keyv(options as Record<string, unknown>);
 			QuickEmailVerification.domainAcceptAllCache.on('error', (err: Error) =>
 				console.error('Domain accept-all cache error:', err));
+			// Initialise versioning
+			QuickEmailVerification.initialiseCacheWithVersion(QuickEmailVerification.domainAcceptAllCache).catch(console.error);
 		} else if (ttl !== QuickEmailVerification.domainAcceptAllCache.opts.ttl) {
 			// Update TTL if changed
 			const store = QuickEmailVerification.createDomainStore();
@@ -292,6 +317,8 @@ export class QuickEmailVerification implements INodeType {
 			QuickEmailVerification.domainAcceptAllCache = new Keyv(options as Record<string, unknown>);
 			QuickEmailVerification.domainAcceptAllCache.on('error', (err: Error) =>
 				console.error('Domain accept-all cache error:', err));
+			// Initialise versioning
+			QuickEmailVerification.initialiseCacheWithVersion(QuickEmailVerification.domainAcceptAllCache).catch(console.error);
 		}
 		return QuickEmailVerification.domainAcceptAllCache;
 	}
@@ -439,11 +466,14 @@ export class QuickEmailVerification implements INodeType {
 							verificationResult = resultWithTimestamp;
 						}
 
-						// Store domain in domain cache if enabled, successful, and accept_all=true
+						// Normalise accept_all to boolean
+						const isAcceptAll = String(verificationResult.accept_all) === 'true';
+
+						// Store domain in domain cache if enabled, successful, and accept_all is true
 						if (enableDomainCache &&
 							QuickEmailVerification.domainAcceptAllCache &&
 							verificationResult.success &&
-							verificationResult.accept_all) {
+							isAcceptAll) {
 
 							const domain = QuickEmailVerification.getDomainFromEmail(email);
 							if (domain) {
@@ -451,7 +481,7 @@ export class QuickEmailVerification implements INodeType {
 									result: verificationResult.result,
 									reason: verificationResult.reason,
 									disposable: verificationResult.disposable,
-									accept_all: verificationResult.accept_all,
+									accept_all: true, // Always store as boolean true
 									role: verificationResult.role,
 									free: verificationResult.free,
 									domain: verificationResult.domain,
