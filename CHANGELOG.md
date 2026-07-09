@@ -2,6 +2,11 @@
 
 All notable changes to the n8n-nodes-quickemailverification package will be documented in this file.
 
+## [1.2.5] - 2026-07-10
+
+### Changed
+- Aligned `peerDependencies.n8n-workflow` to `"*"` for consistency with other n8n community node packages (no behaviour change)
+
 ## [1.2.3-1.2.4] - 2025-04-29
 - Fixed domain cache to only store results for domains with accept_all=true (handles API returning string/boolean)
 - Implemented cache versioning: cache is now invalidated automatically if node version changes, using a special __cache_version__ key in the cache content

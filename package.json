@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-quickemailverification",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "engines": {
     "node": ">=18.10",
     "pnpm": ">=9.1"
@@ -65,6 +65,6 @@
     "keyv-file": "5.1.1"
   },
   "peerDependencies": {
-    "n8n-workflow": ">1.7.0"
+    "n8n-workflow": "*"
   }
 }
