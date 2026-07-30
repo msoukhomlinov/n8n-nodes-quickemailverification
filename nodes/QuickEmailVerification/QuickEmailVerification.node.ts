@@ -341,20 +341,25 @@ export class QuickEmailVerification implements INodeType {
 		const enableDomainCache = credentials.enableDomainCache as boolean;
 		const domainCacheTTL = (credentials.domainCacheTTL as number) * 24 * 60 * 60 * 1000;
 
-		// Handle per-address cache based on the enableCache setting
+		// Handle per-address cache based on the enableCache setting.
+		// The returned instance is used for every read/write below instead of the static field, since a
+		// concurrent execution with a different TTL can reassign the static field to a different instance
+		// (possibly still mid version-check) while this execution is running.
+		let addressCache: Keyv | null = null;
 		if (enablePerAddressCache) {
 			// Initialize or update per-address cache with the correct TTL
-			await QuickEmailVerification.getAddressCache(perAddressCacheTTL);
+			addressCache = await QuickEmailVerification.getAddressCache(perAddressCacheTTL);
 		} else if (QuickEmailVerification.doesAddressCacheFileExist()) {
 			// If per-address cache is disabled but a cache file exists, clean it up
 			QuickEmailVerification.cleanupAddressCacheFile();
 			QuickEmailVerification.addressCache = null;
 		}
 
-		// Handle domain cache based on the enableDomainCache setting
+		// Handle domain cache based on the enableDomainCache setting (same reasoning as above)
+		let domainCache: Keyv | null = null;
 		if (enableDomainCache) {
 			// Initialize or update domain cache with the correct TTL
-			await QuickEmailVerification.getDomainAcceptAllCache(domainCacheTTL);
+			domainCache = await QuickEmailVerification.getDomainAcceptAllCache(domainCacheTTL);
 		} else if (QuickEmailVerification.doesDomainCacheFileExist()) {
 			// If domain cache is disabled but a cache file exists, clean it up
 			QuickEmailVerification.cleanupDomainCacheFile();
@@ -383,8 +388,8 @@ export class QuickEmailVerification implements INodeType {
 					let domainCachedResult: IDomainCacheEntry | undefined;
 
 					// Only check per-address cache if enabled and initialized
-					if (enablePerAddressCache && QuickEmailVerification.addressCache) {
-						const addressCached = await QuickEmailVerification.addressCache.get(email);
+					if (enablePerAddressCache && addressCache) {
+						const addressCached = await addressCache.get(email);
 						if (addressCached) {
 							verificationResult = addressCached as IEmailVerificationResponse;
 							addressCachedResult = verificationResult;
@@ -392,10 +397,10 @@ export class QuickEmailVerification implements INodeType {
 					}
 
 					// If not found in address cache, check domain cache
-					if (!verificationResult && enableDomainCache && QuickEmailVerification.domainAcceptAllCache) {
+					if (!verificationResult && enableDomainCache && domainCache) {
 						const domain = QuickEmailVerification.getDomainFromEmail(email);
 						if (domain) {
-							const domainCached = await QuickEmailVerification.domainAcceptAllCache.get(domain);
+							const domainCached = await domainCache.get(domain);
 							if (domainCached) {
 								domainCachedResult = domainCached as IDomainCacheEntry;
 
@@ -453,12 +458,12 @@ export class QuickEmailVerification implements INodeType {
 						}
 
 						// Store in per-address cache if enabled and successful
-						if (enablePerAddressCache && QuickEmailVerification.addressCache && verificationResult.success) {
+						if (enablePerAddressCache && addressCache && verificationResult.success) {
 							const resultWithTimestamp = {
 								...verificationResult,
 								verifiedAt: new Date().toISOString(),
 							};
-							await QuickEmailVerification.addressCache.set(email, resultWithTimestamp);
+							await addressCache.set(email, resultWithTimestamp);
 							verificationResult = resultWithTimestamp;
 						}
 
@@ -467,7 +472,7 @@ export class QuickEmailVerification implements INodeType {
 
 						// Store domain in domain cache if enabled, successful, and accept_all is true
 						if (enableDomainCache &&
-							QuickEmailVerification.domainAcceptAllCache &&
+							domainCache &&
 							verificationResult.success &&
 							isAcceptAll) {
 
@@ -491,7 +496,7 @@ export class QuickEmailVerification implements INodeType {
 									verifiedAt: new Date().toISOString()
 								};
 
-								await QuickEmailVerification.domainAcceptAllCache.set(domain, domainEntry);
+								await domainCache.set(domain, domainEntry);
 							}
 						}
 					}
