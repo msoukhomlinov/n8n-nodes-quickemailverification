@@ -2,6 +2,19 @@
 
 All notable changes to the n8n-nodes-quickemailverification package will be documented in this file.
 
+## [1.2.6] - 2026-07-30
+
+### Fixed
+- Bumped `keyv` from `^4.5.3` to `^5.6.0` to align with `keyv-file`'s v5-family `@keyv/serialize` dependency, removing an internal keyv v4/v5 version mismatch in this package's own dependency tree (#2). No API changes needed — `get`/`set`/`clear`/`on`/`opts.ttl` surface is unchanged between keyv v4 and v5.
+- Fixed `getNodeVersion()` resolving the wrong path for `package.json` (was reading `dist/package.json`, which never exists), which silently broke cache-version invalidation on every upgrade since it was introduced in 1.2.3. Cache-version checking now actually runs; as a one-time side effect, address and domain caches will be cleared on first use after this upgrade. Also gave the internal version marker an explicit `ttl: 0` (no expiry) so it can't itself expire and trigger a periodic full cache wipe.
+- `getAddressCache()`/`getDomainAcceptAllCache()` now await cache-version initialisation before returning, instead of firing it off in the background. Previously `execute()` could read/write cache entries while the version check and clear were still in flight, letting a stale entry slip through on the first run right after an upgrade.
+- That await only protected the call that created the cache instance — a concurrent second call with the same TTL saw the cache already assigned and returned immediately without waiting for the first call's version check to finish. Both getters now track their in-flight initialisation in a shared promise so every caller, not just the one that created the instance, waits for it.
+- `execute()` awaited the returned cache instance from the getters but then discarded it, reading/writing via the static field for the rest of the run. A concurrent execution with a different TTL could reassign that static field mid-run, so a still-in-progress execution could end up reading/writing an unrelated cache instance instead of the one it was just handed. `execute()` now uses the instance the getter actually returned for every cache access in that run.
+- The internal version marker was stored under the same key namespace as user-supplied cache entries. Since the email parameter has no format validation, an email like `x@__cache_version__` made the domain-cache key collide with the marker, returning it as a malformed cached result and skipping API verification entirely. The marker now lives in its own Keyv namespace on the same underlying store, which cannot collide with any user-derived key.
+
+### Note
+- Different credentials on this node share the same on-disk address/domain cache files, and can legitimately race each other's reads/writes/cleanup (e.g. one credential disabling caching while another has it enabled). This is intentional — credentials are expected to enrich the same shared cache — so it is not treated as a bug.
+
 ## [1.2.5] - 2026-07-10
 
 ### Changed
