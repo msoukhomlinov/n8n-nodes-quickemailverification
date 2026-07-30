@@ -2,6 +2,11 @@
 
 All notable changes to the n8n-nodes-quickemailverification package will be documented in this file.
 
+## [1.2.6] - 2026-07-30
+
+### Fixed
+- Bumped `keyv` from `^4.5.3` to `^5.6.0` to align with `keyv-file`'s v5-family `@keyv/serialize` dependency, removing an internal keyv v4/v5 version mismatch in this package's own dependency tree (#2). No API changes needed — `get`/`set`/`clear`/`on`/`opts.ttl` surface is unchanged between keyv v4 and v5.
+
 ## [1.2.5] - 2026-07-10
 
 ### Changed
