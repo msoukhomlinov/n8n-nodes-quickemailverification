@@ -184,6 +184,24 @@ export class QuickEmailVerification implements INodeType {
 	// Instances that were disabled+cleaned up while another execution still held a local reference to them.
 	// A write through a stale reference would otherwise recreate the cache file that cleanup just deleted.
 	static invalidatedCaches: WeakSet<Keyv> = new WeakSet();
+	// Counts writes currently in flight (past their invalidation check, not yet landed on disk) per cache kind,
+	// so cleanup can wait for them to settle instead of deleting the file out from under an already-started write.
+	static addressCacheInFlightWrites = 0;
+	static domainCacheInFlightWrites = 0;
+
+	// Waits for an in-flight-writes counter to drain to zero before cleanup deletes a cache file.
+	// ponytail: polling wait rather than a proper drain signal/semaphore - keyv-file's writes settle within its
+	// ~100ms debounce window, so a short poll interval is sufficient; the timeout bounds worst case to avoid an
+	// unrelated disable-cache execution blocking indefinitely if a write ever hangs.
+	static async waitForInFlightWrites(getCount: () => number): Promise<void> {
+		const maxWaitMs = 2000;
+		const pollIntervalMs = 20;
+		let waited = 0;
+		while (getCount() > 0 && waited < maxWaitMs) {
+			await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+			waited += pollIntervalMs;
+		}
+	}
 
 	// Check if cache file exists
 	static doesAddressCacheFileExist(): boolean {
@@ -363,10 +381,13 @@ export class QuickEmailVerification implements INodeType {
 			addressCache = await QuickEmailVerification.getAddressCache(perAddressCacheTTL);
 		} else if (QuickEmailVerification.doesAddressCacheFileExist()) {
 			// If per-address cache is disabled but a cache file exists, clean it up.
-			// Invalidate the outgoing instance so a concurrent execution still holding it stops using it.
+			// Invalidate the outgoing instance first (so no new write can start), then wait for any write
+			// that already started before the file is deleted - otherwise its debounced disk write can
+			// recreate the file after this cleanup runs.
 			if (QuickEmailVerification.addressCache) {
 				QuickEmailVerification.invalidatedCaches.add(QuickEmailVerification.addressCache);
 			}
+			await QuickEmailVerification.waitForInFlightWrites(() => QuickEmailVerification.addressCacheInFlightWrites);
 			QuickEmailVerification.cleanupAddressCacheFile();
 			QuickEmailVerification.addressCache = null;
 		}
@@ -378,10 +399,13 @@ export class QuickEmailVerification implements INodeType {
 			domainCache = await QuickEmailVerification.getDomainAcceptAllCache(domainCacheTTL);
 		} else if (QuickEmailVerification.doesDomainCacheFileExist()) {
 			// If domain cache is disabled but a cache file exists, clean it up.
-			// Invalidate the outgoing instance so a concurrent execution still holding it stops using it.
+			// Invalidate the outgoing instance first (so no new write can start), then wait for any write
+			// that already started before the file is deleted - otherwise its debounced disk write can
+			// recreate the file after this cleanup runs.
 			if (QuickEmailVerification.domainAcceptAllCache) {
 				QuickEmailVerification.invalidatedCaches.add(QuickEmailVerification.domainAcceptAllCache);
 			}
+			await QuickEmailVerification.waitForInFlightWrites(() => QuickEmailVerification.domainCacheInFlightWrites);
 			QuickEmailVerification.cleanupDomainCacheFile();
 			QuickEmailVerification.domainAcceptAllCache = null;
 		}
@@ -483,7 +507,13 @@ export class QuickEmailVerification implements INodeType {
 								...verificationResult,
 								verifiedAt: new Date().toISOString(),
 							};
-							await addressCache.set(email, resultWithTimestamp);
+							// Counted so a concurrent disable+cleanup waits for this write to land before deleting the file
+							QuickEmailVerification.addressCacheInFlightWrites++;
+							try {
+								await addressCache.set(email, resultWithTimestamp);
+							} finally {
+								QuickEmailVerification.addressCacheInFlightWrites--;
+							}
 							verificationResult = resultWithTimestamp;
 						}
 
@@ -517,7 +547,13 @@ export class QuickEmailVerification implements INodeType {
 									verifiedAt: new Date().toISOString()
 								};
 
-								await domainCache.set(domain, domainEntry);
+								// Counted so a concurrent disable+cleanup waits for this write to land before deleting the file
+								QuickEmailVerification.domainCacheInFlightWrites++;
+								try {
+									await domainCache.set(domain, domainEntry);
+								} finally {
+									QuickEmailVerification.domainCacheInFlightWrites--;
+								}
 							}
 						}
 					}
