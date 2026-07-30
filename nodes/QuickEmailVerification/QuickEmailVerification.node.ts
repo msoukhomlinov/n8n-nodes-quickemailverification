@@ -181,27 +181,6 @@ export class QuickEmailVerification implements INodeType {
 	static addressCache: Keyv | null = null;
 	// Tracks the in-flight version-check/clear for addressCache so concurrent callers await the same init instead of racing it
 	static addressCacheInitPromise: Promise<void> | null = null;
-	// Instances that were disabled+cleaned up while another execution still held a local reference to them.
-	// A write through a stale reference would otherwise recreate the cache file that cleanup just deleted.
-	static invalidatedCaches: WeakSet<Keyv> = new WeakSet();
-	// Counts writes currently in flight (past their invalidation check, not yet landed on disk) per cache kind,
-	// so cleanup can wait for them to settle instead of deleting the file out from under an already-started write.
-	static addressCacheInFlightWrites = 0;
-	static domainCacheInFlightWrites = 0;
-
-	// Waits for an in-flight-writes counter to drain to zero before cleanup deletes a cache file.
-	// ponytail: polling wait rather than a proper drain signal/semaphore - keyv-file's writes settle within its
-	// ~100ms debounce window, so a short poll interval is sufficient; the timeout bounds worst case to avoid an
-	// unrelated disable-cache execution blocking indefinitely if a write ever hangs.
-	static async waitForInFlightWrites(getCount: () => number): Promise<void> {
-		const maxWaitMs = 2000;
-		const pollIntervalMs = 20;
-		let waited = 0;
-		while (getCount() > 0 && waited < maxWaitMs) {
-			await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-			waited += pollIntervalMs;
-		}
-	}
 
 	// Check if cache file exists
 	static doesAddressCacheFileExist(): boolean {
@@ -380,14 +359,7 @@ export class QuickEmailVerification implements INodeType {
 			// Initialize or update per-address cache with the correct TTL
 			addressCache = await QuickEmailVerification.getAddressCache(perAddressCacheTTL);
 		} else if (QuickEmailVerification.doesAddressCacheFileExist()) {
-			// If per-address cache is disabled but a cache file exists, clean it up.
-			// Invalidate the outgoing instance first (so no new write can start), then wait for any write
-			// that already started before the file is deleted - otherwise its debounced disk write can
-			// recreate the file after this cleanup runs.
-			if (QuickEmailVerification.addressCache) {
-				QuickEmailVerification.invalidatedCaches.add(QuickEmailVerification.addressCache);
-			}
-			await QuickEmailVerification.waitForInFlightWrites(() => QuickEmailVerification.addressCacheInFlightWrites);
+			// If per-address cache is disabled but a cache file exists, clean it up
 			QuickEmailVerification.cleanupAddressCacheFile();
 			QuickEmailVerification.addressCache = null;
 		}
@@ -398,14 +370,7 @@ export class QuickEmailVerification implements INodeType {
 			// Initialize or update domain cache with the correct TTL
 			domainCache = await QuickEmailVerification.getDomainAcceptAllCache(domainCacheTTL);
 		} else if (QuickEmailVerification.doesDomainCacheFileExist()) {
-			// If domain cache is disabled but a cache file exists, clean it up.
-			// Invalidate the outgoing instance first (so no new write can start), then wait for any write
-			// that already started before the file is deleted - otherwise its debounced disk write can
-			// recreate the file after this cleanup runs.
-			if (QuickEmailVerification.domainAcceptAllCache) {
-				QuickEmailVerification.invalidatedCaches.add(QuickEmailVerification.domainAcceptAllCache);
-			}
-			await QuickEmailVerification.waitForInFlightWrites(() => QuickEmailVerification.domainCacheInFlightWrites);
+			// If domain cache is disabled but a cache file exists, clean it up
 			QuickEmailVerification.cleanupDomainCacheFile();
 			QuickEmailVerification.domainAcceptAllCache = null;
 		}
@@ -431,8 +396,8 @@ export class QuickEmailVerification implements INodeType {
 					let addressCachedResult: IEmailVerificationResponse | undefined;
 					let domainCachedResult: IDomainCacheEntry | undefined;
 
-					// Only check per-address cache if enabled, initialized, and not invalidated by a concurrent disable+cleanup
-					if (enablePerAddressCache && addressCache && !QuickEmailVerification.invalidatedCaches.has(addressCache)) {
+					// Only check per-address cache if enabled and initialized
+					if (enablePerAddressCache && addressCache) {
 						const addressCached = await addressCache.get(email);
 						if (addressCached) {
 							verificationResult = addressCached as IEmailVerificationResponse;
@@ -441,7 +406,7 @@ export class QuickEmailVerification implements INodeType {
 					}
 
 					// If not found in address cache, check domain cache
-					if (!verificationResult && enableDomainCache && domainCache && !QuickEmailVerification.invalidatedCaches.has(domainCache)) {
+					if (!verificationResult && enableDomainCache && domainCache) {
 						const domain = QuickEmailVerification.getDomainFromEmail(email);
 						if (domain) {
 							const domainCached = await domainCache.get(domain);
@@ -501,29 +466,22 @@ export class QuickEmailVerification implements INodeType {
 							}
 						}
 
-						// Store in per-address cache if enabled, successful, and not invalidated by a concurrent disable+cleanup
-						if (enablePerAddressCache && addressCache && !QuickEmailVerification.invalidatedCaches.has(addressCache) && verificationResult.success) {
+						// Store in per-address cache if enabled and successful
+						if (enablePerAddressCache && addressCache && verificationResult.success) {
 							const resultWithTimestamp = {
 								...verificationResult,
 								verifiedAt: new Date().toISOString(),
 							};
-							// Counted so a concurrent disable+cleanup waits for this write to land before deleting the file
-							QuickEmailVerification.addressCacheInFlightWrites++;
-							try {
-								await addressCache.set(email, resultWithTimestamp);
-							} finally {
-								QuickEmailVerification.addressCacheInFlightWrites--;
-							}
+							await addressCache.set(email, resultWithTimestamp);
 							verificationResult = resultWithTimestamp;
 						}
 
 						// Normalise accept_all to boolean
 						const isAcceptAll = String(verificationResult.accept_all) === 'true';
 
-						// Store domain in domain cache if enabled, successful, accept_all, and not invalidated
+						// Store domain in domain cache if enabled, successful, and accept_all is true
 						if (enableDomainCache &&
 							domainCache &&
-							!QuickEmailVerification.invalidatedCaches.has(domainCache) &&
 							verificationResult.success &&
 							isAcceptAll) {
 
@@ -547,13 +505,7 @@ export class QuickEmailVerification implements INodeType {
 									verifiedAt: new Date().toISOString()
 								};
 
-								// Counted so a concurrent disable+cleanup waits for this write to land before deleting the file
-								QuickEmailVerification.domainCacheInFlightWrites++;
-								try {
-									await domainCache.set(domain, domainEntry);
-								} finally {
-									QuickEmailVerification.domainCacheInFlightWrites--;
-								}
+								await domainCache.set(domain, domainEntry);
 							}
 						}
 					}
