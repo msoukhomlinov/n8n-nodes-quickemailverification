@@ -6,6 +6,7 @@ All notable changes to the n8n-nodes-quickemailverification package will be docu
 
 ### Fixed
 - Bumped `keyv` from `^4.5.3` to `^5.6.0` to align with `keyv-file`'s v5-family `@keyv/serialize` dependency, removing an internal keyv v4/v5 version mismatch in this package's own dependency tree (#2). No API changes needed — `get`/`set`/`clear`/`on`/`opts.ttl` surface is unchanged between keyv v4 and v5.
+- Fixed `getNodeVersion()` resolving the wrong path for `package.json` (was reading `dist/package.json`, which never exists), which silently broke cache-version invalidation on every upgrade since it was introduced in 1.2.3. Cache-version checking now actually runs; as a one-time side effect, address and domain caches will be cleared on first use after this upgrade. Also gave the internal version marker an explicit `ttl: 0` (no expiry) so it can't itself expire and trigger a periodic full cache wipe.
 
 ## [1.2.5] - 2026-07-10
 

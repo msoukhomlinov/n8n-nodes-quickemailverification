@@ -200,7 +200,8 @@ export class QuickEmailVerification implements INodeType {
 
 	// Helper to get node version from package.json
 	static getNodeVersion(): string {
-		const pkgPath = path.join(__dirname, '../../package.json');
+		// __dirname at runtime is dist/nodes/QuickEmailVerification; package.json lives 3 levels up, at the package root
+		const pkgPath = path.join(__dirname, '../../../package.json');
 		const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
 		return pkg.version;
 	}
@@ -212,7 +213,8 @@ export class QuickEmailVerification implements INodeType {
 		const cachedVersion = await cache.get(versionKey);
 		if (cachedVersion !== currentVersion) {
 			await cache.clear();
-			await cache.set(versionKey, currentVersion);
+			// ttl 0 overrides the cache's configured TTL so the version marker never expires on its own
+			await cache.set(versionKey, currentVersion, 0);
 			console.log(`[QuickEmailVerification] Cache cleared due to version change (${cachedVersion} -> ${currentVersion})`);
 		}
 	}
