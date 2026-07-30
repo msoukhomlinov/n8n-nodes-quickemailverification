@@ -220,7 +220,7 @@ export class QuickEmailVerification implements INodeType {
 	}
 
 	// Get or create the address cache instance
-	static getAddressCache(ttl: number): Keyv {
+	static async getAddressCache(ttl: number): Promise<Keyv> {
 		if (!QuickEmailVerification.addressCache) {
 			const store = QuickEmailVerification.createAddressStore();
 			const options: IKeyvOptions = {
@@ -229,8 +229,8 @@ export class QuickEmailVerification implements INodeType {
 			};
 			QuickEmailVerification.addressCache = new Keyv(options as Record<string, unknown>);
 			QuickEmailVerification.addressCache.on('error', (err: Error) => console.error('Per-address cache error:', err));
-			// Initialise versioning
-			QuickEmailVerification.initialiseCacheWithVersion(QuickEmailVerification.addressCache).catch(console.error);
+			// Initialise versioning - awaited so stale entries can't be served before the check completes
+			await QuickEmailVerification.initialiseCacheWithVersion(QuickEmailVerification.addressCache).catch(console.error);
 		} else if (ttl !== QuickEmailVerification.addressCache.opts.ttl) {
 			// Update TTL if changed
 			const store = QuickEmailVerification.createAddressStore();
@@ -240,8 +240,8 @@ export class QuickEmailVerification implements INodeType {
 			};
 			QuickEmailVerification.addressCache = new Keyv(options as Record<string, unknown>);
 			QuickEmailVerification.addressCache.on('error', (err: Error) => console.error('Per-address cache error:', err));
-			// Initialise versioning
-			QuickEmailVerification.initialiseCacheWithVersion(QuickEmailVerification.addressCache).catch(console.error);
+			// Initialise versioning - awaited so stale entries can't be served before the check completes
+			await QuickEmailVerification.initialiseCacheWithVersion(QuickEmailVerification.addressCache).catch(console.error);
 		}
 		return QuickEmailVerification.addressCache;
 	}
@@ -297,7 +297,7 @@ export class QuickEmailVerification implements INodeType {
 	}
 
 	// Get or create the domain accept-all cache instance
-	static getDomainAcceptAllCache(ttl: number): Keyv {
+	static async getDomainAcceptAllCache(ttl: number): Promise<Keyv> {
 		if (!QuickEmailVerification.domainAcceptAllCache) {
 			const store = QuickEmailVerification.createDomainStore();
 			const options: IKeyvOptions = {
@@ -307,8 +307,8 @@ export class QuickEmailVerification implements INodeType {
 			QuickEmailVerification.domainAcceptAllCache = new Keyv(options as Record<string, unknown>);
 			QuickEmailVerification.domainAcceptAllCache.on('error', (err: Error) =>
 				console.error('Domain accept-all cache error:', err));
-			// Initialise versioning
-			QuickEmailVerification.initialiseCacheWithVersion(QuickEmailVerification.domainAcceptAllCache).catch(console.error);
+			// Initialise versioning - awaited so stale entries can't be served before the check completes
+			await QuickEmailVerification.initialiseCacheWithVersion(QuickEmailVerification.domainAcceptAllCache).catch(console.error);
 		} else if (ttl !== QuickEmailVerification.domainAcceptAllCache.opts.ttl) {
 			// Update TTL if changed
 			const store = QuickEmailVerification.createDomainStore();
@@ -319,8 +319,8 @@ export class QuickEmailVerification implements INodeType {
 			QuickEmailVerification.domainAcceptAllCache = new Keyv(options as Record<string, unknown>);
 			QuickEmailVerification.domainAcceptAllCache.on('error', (err: Error) =>
 				console.error('Domain accept-all cache error:', err));
-			// Initialise versioning
-			QuickEmailVerification.initialiseCacheWithVersion(QuickEmailVerification.domainAcceptAllCache).catch(console.error);
+			// Initialise versioning - awaited so stale entries can't be served before the check completes
+			await QuickEmailVerification.initialiseCacheWithVersion(QuickEmailVerification.domainAcceptAllCache).catch(console.error);
 		}
 		return QuickEmailVerification.domainAcceptAllCache;
 	}
@@ -350,7 +350,7 @@ export class QuickEmailVerification implements INodeType {
 		// Handle per-address cache based on the enableCache setting
 		if (enablePerAddressCache) {
 			// Initialize or update per-address cache with the correct TTL
-			QuickEmailVerification.getAddressCache(perAddressCacheTTL);
+			await QuickEmailVerification.getAddressCache(perAddressCacheTTL);
 		} else if (QuickEmailVerification.doesAddressCacheFileExist()) {
 			// If per-address cache is disabled but a cache file exists, clean it up
 			QuickEmailVerification.cleanupAddressCacheFile();
@@ -360,7 +360,7 @@ export class QuickEmailVerification implements INodeType {
 		// Handle domain cache based on the enableDomainCache setting
 		if (enableDomainCache) {
 			// Initialize or update domain cache with the correct TTL
-			QuickEmailVerification.getDomainAcceptAllCache(domainCacheTTL);
+			await QuickEmailVerification.getDomainAcceptAllCache(domainCacheTTL);
 		} else if (QuickEmailVerification.doesDomainCacheFileExist()) {
 			// If domain cache is disabled but a cache file exists, clean it up
 			QuickEmailVerification.cleanupDomainCacheFile();
