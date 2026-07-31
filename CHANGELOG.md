@@ -2,6 +2,12 @@
 
 All notable changes to the n8n-nodes-quickemailverification package will be documented in this file.
 
+## [1.2.7] - 2026-07-31
+
+### Fixed
+- Removed the `keyv` and `keyv-file` runtime dependencies entirely (#4). When this node is installed alongside other community nodes in n8n's shared `node_modules` tree (the real-world "Update from UI" path, not an isolated `npm install`), npm's resolver was nesting a `keyv` copy under this package with a mismatched file layout (v4's `src/index.js` vs v5's `dist/index.js`), so the node failed to load with `ENOENT ... node_modules/keyv/src/index.js` and the update never completed. The address/domain caches are now backed by a small in-repo, zero-dependency file-backed TTL cache (sync `fs` + JSON), which has no external package to collide on. Cache semantics (TTL, version-based invalidation, disable/cleanup) are unchanged; expired entries are now pruned on every write (keyv-file did the same), so the cache file no longer grows unbounded.
+- As a side effect of dropping Keyv, the init-promise/race-tracking machinery from #2/#3 is gone — the new cache's reads/writes are synchronous, so there's no async window for concurrent calls to interleave in the first place.
+
 ## [1.2.6] - 2026-07-30
 
 ### Fixed

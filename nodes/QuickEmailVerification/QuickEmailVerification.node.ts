@@ -6,28 +6,94 @@ import type {
 	IDataObject,
 } from 'n8n-workflow';
 import { NodeConnectionType } from 'n8n-workflow';
-import Keyv from 'keyv';
-import { KeyvFile } from 'keyv-file';
 import { QuickEmailVerificationApi } from './QuickEmailVerificationApi.js';
 import type { IEmailVerificationResponse } from './QuickEmailVerificationApi.js';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
 
-// Define interfaces for type safety
-interface IKeyvStore {
-	// Minimal interface to satisfy Keyv store requirements
-	get(key: string): Promise<unknown>;
-	set(key: string, value: unknown, ttl?: number): Promise<boolean>;
-	delete(key: string): Promise<boolean>;
-	clear?(): Promise<void>;
+interface ICacheFileEntry {
+	value: unknown;
+	expiresAt: number | null; // epoch ms; null = never expires
 }
 
-interface IKeyvOptions {
-	store?: IKeyvStore;
-	ttl?: number | null;  // Allow null for indefinite TTL
-	namespace?: string;
-	[key: string]: unknown;
+// Minimal zero-dependency, file-backed TTL cache. Replaces keyv/keyv-file: those packages
+// get nested with a mismatched file layout when this node sits alongside other community
+// nodes pulling in conflicting keyv versions in n8n's shared node_modules tree, breaking
+// the community-node update entirely (#4). Being sync (no I/O await between a read/write
+// and the in-memory map update) also means concurrent calls can't interleave mid-operation,
+// which removed the need for the init-promise/race-tracking machinery keyv required.
+class FileCache {
+	private entries = new Map<string, ICacheFileEntry>();
+	// Stored as its own JSON field rather than a map key, so it can never collide with a
+	// user-supplied email/domain used as a cache key (those have no format validation).
+	private version: string | null = null;
+	private loaded = false;
+
+	constructor(private readonly filePath: string) {}
+
+	private load(): void {
+		if (this.loaded) return;
+		this.loaded = true;
+		if (!fs.existsSync(this.filePath)) return;
+		try {
+			const raw = fs.readFileSync(this.filePath, 'utf8');
+			const parsed = JSON.parse(raw) as { version?: string; entries?: Record<string, ICacheFileEntry> };
+			this.version = parsed.version ?? null;
+			for (const [key, entry] of Object.entries(parsed.entries ?? {})) {
+				this.entries.set(key, entry);
+			}
+		} catch (error) {
+			console.error('Failed to load cache file:', error);
+		}
+	}
+
+	private persist(): void {
+		// Prune expired entries before every write, otherwise every set() rewrites a
+		// file that only ever grows (each call already scans and pays for expired
+		// entries anyway; skipping the cleanup here would just defer that cost).
+		const now = Date.now();
+		for (const [key, entry] of this.entries) {
+			if (entry.expiresAt !== null && entry.expiresAt <= now) this.entries.delete(key);
+		}
+		// Object.fromEntries (rather than assigning entries[key] directly) can't be
+		// tripped up by a user-supplied key like "__proto__".
+		const entries = Object.fromEntries(this.entries);
+		try {
+			fs.writeFileSync(this.filePath, JSON.stringify({ version: this.version, entries }), 'utf8');
+		} catch (error) {
+			console.error('Failed to write cache file:', error);
+		}
+	}
+
+	// Wipes all entries if the node version has changed since they were written.
+	ensureVersion(currentVersion: string): void {
+		this.load();
+		if (this.version !== currentVersion) {
+			console.log(`[QuickEmailVerification] Cache cleared due to version change (${this.version} -> ${currentVersion})`);
+			this.entries.clear();
+			this.version = currentVersion;
+			this.persist();
+		}
+	}
+
+	get<T>(key: string): T | undefined {
+		this.load();
+		const entry = this.entries.get(key);
+		if (!entry) return undefined;
+		if (entry.expiresAt !== null && entry.expiresAt <= Date.now()) {
+			this.entries.delete(key);
+			this.persist();
+			return undefined;
+		}
+		return entry.value as T;
+	}
+
+	set(key: string, value: unknown, ttl: number): void {
+		this.load();
+		this.entries.set(key, { value, expiresAt: ttl > 0 ? Date.now() + ttl : null });
+		this.persist();
+	}
 }
 
 // Domain cache entry interface
@@ -169,18 +235,8 @@ export class QuickEmailVerification implements INodeType {
 		return path.join(QuickEmailVerification.getCacheDirPath(), 'address-cache.json');
 	}
 
-	// Create a store instance for Keyv
-	static createAddressStore(): IKeyvStore {
-		// Using our interface for the store
-		return new KeyvFile({
-			filename: QuickEmailVerification.getCacheFilePath()
-		}) as unknown as IKeyvStore;
-	}
-
 	// Lazy cache initialization - only created when needed
-	static addressCache: Keyv | null = null;
-	// Tracks the in-flight version-check/clear for addressCache so concurrent callers await the same init instead of racing it
-	static addressCacheInitPromise: Promise<void> | null = null;
+	static addressCache: FileCache | null = null;
 
 	// Check if cache file exists
 	static doesAddressCacheFileExist(): boolean {
@@ -208,49 +264,18 @@ export class QuickEmailVerification implements INodeType {
 		return pkg.version;
 	}
 
-	// Helper to initialise cache and check version
-	static async initialiseCacheWithVersion(cache: Keyv) {
-		const currentVersion = QuickEmailVerification.getNodeVersion();
-		const versionKey = '__cache_version__';
-		// The email/domain being verified is free text with no format validation, so a value like
-		// "x@__cache_version__" would make the domain cache key collide with this marker if it lived
-		// in the same namespace. A distinct namespace on the same underlying store rules that out entirely,
-		// since Keyv prefixes keys with the namespace before the store ever sees them.
-		const metaOptions: IKeyvOptions = {
-			store: cache.store as unknown as IKeyvStore,
-			namespace: 'qev-cache-meta',
-		};
-		const metaCache = new Keyv(metaOptions as Record<string, unknown>);
-		const cachedVersion = await metaCache.get(versionKey);
-		if (cachedVersion !== currentVersion) {
-			await cache.clear();
-			// ttl 0 overrides the cache's configured TTL so the version marker never expires on its own
-			await metaCache.set(versionKey, currentVersion, 0);
-			console.log(`[QuickEmailVerification] Cache cleared due to version change (${cachedVersion} -> ${currentVersion})`);
-		}
-	}
-
 	// Get or create the address cache instance
-	static async getAddressCache(ttl: number): Promise<Keyv> {
-		// New cache instance needed if none exists yet, or the configured TTL changed
-		if (!QuickEmailVerification.addressCache || ttl !== QuickEmailVerification.addressCache.opts.ttl) {
-			const store = QuickEmailVerification.createAddressStore();
-			const options: IKeyvOptions = {
-				store,
-				ttl
-			};
-			const newCache = new Keyv(options as Record<string, unknown>);
-			newCache.on('error', (err: Error) => console.error('Per-address cache error:', err));
-			QuickEmailVerification.addressCache = newCache;
-			// Stored so concurrent callers can await this same in-flight init instead of racing it (see #2 review feedback)
-			QuickEmailVerification.addressCacheInitPromise =
-				QuickEmailVerification.initialiseCacheWithVersion(newCache).catch(console.error);
+	static getAddressCache(): FileCache {
+		if (!QuickEmailVerification.addressCache) {
+			const cache = new FileCache(QuickEmailVerification.getCacheFilePath());
+			try {
+				cache.ensureVersion(QuickEmailVerification.getNodeVersion());
+			} catch (error) {
+				console.error('Failed to check per-address cache version:', error);
+			}
+			QuickEmailVerification.addressCache = cache;
 		}
-		// Read into locals before awaiting so a later call (different TTL) reassigning the statics mid-await can't affect this caller
-		const cache = QuickEmailVerification.addressCache;
-		const initPromise = QuickEmailVerification.addressCacheInitPromise;
-		await initPromise;
-		return cache;
+		return QuickEmailVerification.addressCache;
 	}
 
 	// Extract domain from email
@@ -275,17 +300,8 @@ export class QuickEmailVerification implements INodeType {
 		return path.join(QuickEmailVerification.getDomainCacheDirPath(), 'domain-accept-all-cache.json');
 	}
 
-	// Create a store instance for domain Keyv
-	static createDomainStore(): IKeyvStore {
-		return new KeyvFile({
-			filename: QuickEmailVerification.getDomainCacheFilePath()
-		}) as unknown as IKeyvStore;
-	}
-
 	// Lazy domain cache initialization - only created when needed
-	static domainAcceptAllCache: Keyv | null = null;
-	// Tracks the in-flight version-check/clear for domainAcceptAllCache so concurrent callers await the same init instead of racing it
-	static domainAcceptAllCacheInitPromise: Promise<void> | null = null;
+	static domainAcceptAllCache: FileCache | null = null;
 
 	// Check if domain cache file exists
 	static doesDomainCacheFileExist(): boolean {
@@ -306,26 +322,17 @@ export class QuickEmailVerification implements INodeType {
 	}
 
 	// Get or create the domain accept-all cache instance
-	static async getDomainAcceptAllCache(ttl: number): Promise<Keyv> {
-		// New cache instance needed if none exists yet, or the configured TTL changed
-		if (!QuickEmailVerification.domainAcceptAllCache || ttl !== QuickEmailVerification.domainAcceptAllCache.opts.ttl) {
-			const store = QuickEmailVerification.createDomainStore();
-			const options: IKeyvOptions = {
-				store,
-				ttl
-			};
-			const newCache = new Keyv(options as Record<string, unknown>);
-			newCache.on('error', (err: Error) => console.error('Domain accept-all cache error:', err));
-			QuickEmailVerification.domainAcceptAllCache = newCache;
-			// Stored so concurrent callers can await this same in-flight init instead of racing it (see #2 review feedback)
-			QuickEmailVerification.domainAcceptAllCacheInitPromise =
-				QuickEmailVerification.initialiseCacheWithVersion(newCache).catch(console.error);
+	static getDomainAcceptAllCache(): FileCache {
+		if (!QuickEmailVerification.domainAcceptAllCache) {
+			const cache = new FileCache(QuickEmailVerification.getDomainCacheFilePath());
+			try {
+				cache.ensureVersion(QuickEmailVerification.getNodeVersion());
+			} catch (error) {
+				console.error('Failed to check domain cache version:', error);
+			}
+			QuickEmailVerification.domainAcceptAllCache = cache;
 		}
-		// Read into locals before awaiting so a later call (different TTL) reassigning the statics mid-await can't affect this caller
-		const cache = QuickEmailVerification.domainAcceptAllCache;
-		const initPromise = QuickEmailVerification.domainAcceptAllCacheInitPromise;
-		await initPromise;
-		return cache;
+		return QuickEmailVerification.domainAcceptAllCache;
 	}
 
 	// Helper method for delayed execution
@@ -351,13 +358,9 @@ export class QuickEmailVerification implements INodeType {
 		const domainCacheTTL = (credentials.domainCacheTTL as number) * 24 * 60 * 60 * 1000;
 
 		// Handle per-address cache based on the enableCache setting.
-		// The returned instance is used for every read/write below instead of the static field, since a
-		// concurrent execution with a different TTL can reassign the static field to a different instance
-		// (possibly still mid version-check) while this execution is running.
-		let addressCache: Keyv | null = null;
+		let addressCache: FileCache | null = null;
 		if (enablePerAddressCache) {
-			// Initialize or update per-address cache with the correct TTL
-			addressCache = await QuickEmailVerification.getAddressCache(perAddressCacheTTL);
+			addressCache = QuickEmailVerification.getAddressCache();
 		} else if (QuickEmailVerification.doesAddressCacheFileExist()) {
 			// If per-address cache is disabled but a cache file exists, clean it up
 			QuickEmailVerification.cleanupAddressCacheFile();
@@ -365,10 +368,9 @@ export class QuickEmailVerification implements INodeType {
 		}
 
 		// Handle domain cache based on the enableDomainCache setting (same reasoning as above)
-		let domainCache: Keyv | null = null;
+		let domainCache: FileCache | null = null;
 		if (enableDomainCache) {
-			// Initialize or update domain cache with the correct TTL
-			domainCache = await QuickEmailVerification.getDomainAcceptAllCache(domainCacheTTL);
+			domainCache = QuickEmailVerification.getDomainAcceptAllCache();
 		} else if (QuickEmailVerification.doesDomainCacheFileExist()) {
 			// If domain cache is disabled but a cache file exists, clean it up
 			QuickEmailVerification.cleanupDomainCacheFile();
@@ -398,7 +400,7 @@ export class QuickEmailVerification implements INodeType {
 
 					// Only check per-address cache if enabled and initialized
 					if (enablePerAddressCache && addressCache) {
-						const addressCached = await addressCache.get(email);
+						const addressCached = addressCache.get<IEmailVerificationResponse>(email);
 						if (addressCached) {
 							verificationResult = addressCached as IEmailVerificationResponse;
 							addressCachedResult = verificationResult;
@@ -409,7 +411,7 @@ export class QuickEmailVerification implements INodeType {
 					if (!verificationResult && enableDomainCache && domainCache) {
 						const domain = QuickEmailVerification.getDomainFromEmail(email);
 						if (domain) {
-							const domainCached = await domainCache.get(domain);
+							const domainCached = domainCache.get<IDomainCacheEntry>(domain);
 							if (domainCached) {
 								domainCachedResult = domainCached as IDomainCacheEntry;
 
@@ -472,7 +474,7 @@ export class QuickEmailVerification implements INodeType {
 								...verificationResult,
 								verifiedAt: new Date().toISOString(),
 							};
-							await addressCache.set(email, resultWithTimestamp);
+							addressCache.set(email, resultWithTimestamp, perAddressCacheTTL);
 							verificationResult = resultWithTimestamp;
 						}
 
@@ -505,7 +507,7 @@ export class QuickEmailVerification implements INodeType {
 									verifiedAt: new Date().toISOString()
 								};
 
-								await domainCache.set(domain, domainEntry);
+								domainCache.set(domain, domainEntry, domainCacheTTL);
 							}
 						}
 					}
